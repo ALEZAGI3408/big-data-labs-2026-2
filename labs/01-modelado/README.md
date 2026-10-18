@@ -1,6 +1,6 @@
 # Lab 1 · Modelado OLTP → OLAP
 
-**Semana 1 · Entrega:** domingo 19 de octubre de 2026
+**Entrega:** viernes 23 de octubre de 2026 · **Peso:** 15%
 
 ## Objetivo
 

@@ -52,6 +52,9 @@ data/
 # JetBrains
 .idea/
 
+# Lakehouse local del Lab 2
+lakehouse-local/
+
 # Logs
 *.log
 logs/

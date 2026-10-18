@@ -4,7 +4,13 @@ Genera transacciones, comercios, clientes y eventos de fraude.
 
 Uso:
     python labs/shared/generate_data.py --transactions 10000 --output data/
-    python labs/shared/generate_data.py --transactions 10000 --dirty-rate 0.02  # con errores (Lab 4)
+    python labs/shared/generate_data.py --transactions 10000 --dirty-rate 0.02  # con errores
+
+Lotes incrementales (Lab 2): el segundo lote reutiliza los clientes del primero,
+trae transacciones nuevas, contracargos de transacciones anteriores y cambios de clientes:
+    python labs/shared/generate_data.py --start-date 2026-08-01 --days 60 --output data/batch1
+    python labs/shared/generate_data.py --start-date 2026-09-30 --days 1 --transactions 2000 \
+        --from-batch data/batch1 --id-prefix B2 --output data/batch2
 """
 
 import argparse
@@ -65,9 +71,11 @@ def generate_transactions(
     n: int = 10_000,
     fraud_rate: float = 0.004,  # 0.4% fraude
     start_date: datetime | None = None,
+    days: int = 90,
+    id_prefix: str = "",
 ) -> tuple[list[dict], list[dict]]:
     if start_date is None:
-        start_date = datetime.now() - timedelta(days=90)
+        start_date = datetime.now() - timedelta(days=days)
 
     transactions = []
     fraud_events = []
@@ -76,13 +84,13 @@ def generate_transactions(
         customer = random.choice(customers)
         merchant = random.choice(MERCHANTS)
         ts = start_date + timedelta(
-            seconds=random.randint(0, 90 * 24 * 3600)
+            seconds=random.randint(0, days * 24 * 3600 - 1)
         )
         amount = round(random.lognormvariate(10.5, 1.2), 2)  # distribución realista
         is_fraud = random.random() < fraud_rate
 
         txn = {
-            "transaction_id": f"TXN{i+1:010d}",
+            "transaction_id": f"TXN{id_prefix}{i+1:010d}",
             "customer_id": customer["customer_id"],
             "merchant_id": merchant["id"],
             "merchant_name": merchant["name"],
@@ -98,7 +106,7 @@ def generate_transactions(
 
         if is_fraud:
             fraud_events.append({
-                "event_id": f"FRD{len(fraud_events)+1:08d}",
+                "event_id": f"FRD{id_prefix}{len(fraud_events)+1:08d}",
                 "transaction_id": txn["transaction_id"],
                 "pattern": random.choice(FRAUD_PATTERNS),
                 "risk_score": round(random.uniform(0.7, 1.0), 4),
@@ -131,6 +139,25 @@ def inject_dirty_data(transactions: list[dict], rate: float) -> list[dict]:
     return dirty
 
 
+def change_customers(customers: list[dict], rate: float = 0.05) -> list[dict]:
+    """Algunos clientes se mudan de ciudad o cambian de segmento entre lotes."""
+    changed = [dict(c) for c in customers]
+    for c in random.sample(changed, int(len(changed) * rate)):
+        if random.random() < 0.5:
+            c["city"] = random.choice([x for x in ["Medellín", "Bogotá", "Cali", "Barranquilla"] if x != c["city"]])
+        else:
+            c["segment"] = random.choice([x for x in ["mass", "premium", "high_value"] if x != c["segment"]])
+    return changed
+
+
+def chargebacks(previous: list[dict], rate: float = 0.01) -> list[dict]:
+    """Reenvía transacciones aprobadas de un lote anterior con estado 'chargeback'."""
+    valid = [t for t in previous if t["status"] == "approved" and t["customer_id"]
+             and isinstance(t["amount_cop"], (int, float)) and 0 < t["amount_cop"] < 1e8]
+    unique = list({t["transaction_id"]: t for t in valid}.values())
+    return [{**t, "status": "chargeback"} for t in random.sample(unique, int(len(unique) * rate))]
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generador de datos PayTrack")
     parser.add_argument("--transactions", type=int, default=10_000)
@@ -140,19 +167,34 @@ def main():
         "--dirty-rate", type=float, default=0.0,
         help="fracción de registros con problemas de calidad (ej. 0.02)",
     )
+    parser.add_argument("--start-date", help="YYYY-MM-DD (por defecto: hace --days días)")
+    parser.add_argument("--days", type=int, default=90, help="días que cubren las transacciones")
+    parser.add_argument("--from-batch", type=Path, help="lote anterior: reutiliza clientes y genera contracargos")
+    parser.add_argument("--id-prefix", default="", help="prefijo para que los IDs no choquen entre lotes")
     args = parser.parse_args()
 
     output = Path(args.output)
     output.mkdir(parents=True, exist_ok=True)
 
-    print(f"Generando {args.customers} clientes...")
-    customers = generate_customers(args.customers)
+    if args.from_batch:
+        print(f"Reutilizando clientes de {args.from_batch} (con cambios de ciudad/segmento)...")
+        customers = change_customers(json.loads((args.from_batch / "customers.json").read_text()))
+    else:
+        print(f"Generando {args.customers} clientes...")
+        customers = generate_customers(args.customers)
 
     print(f"Generando {args.transactions} transacciones...")
-    transactions, fraud_events = generate_transactions(customers, args.transactions)
+    start = datetime.fromisoformat(args.start_date) if args.start_date else None
+    transactions, fraud_events = generate_transactions(
+        customers, args.transactions, start_date=start, days=args.days, id_prefix=args.id_prefix
+    )
     if args.dirty_rate:
         print(f"Inyectando errores de calidad ({args.dirty_rate:.0%})...")
         transactions = inject_dirty_data(transactions, args.dirty_rate)
+    if args.from_batch:
+        updates = chargebacks(json.loads((args.from_batch / "transactions.json").read_text()))
+        print(f"Agregando {len(updates)} contracargos de transacciones del lote anterior...")
+        transactions += updates
 
     # Guardar
     for name, data in [

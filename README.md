@@ -4,26 +4,23 @@ Laboratorios prácticos para el curso **Almacenamiento y Procesamiento de Grande
 
 **Caso de uso:** PayTrack Colombia — plataforma de pagos digitales con 500K transacciones diarias, análisis de fraude en tiempo real y conciliación batch.
 
-> La infraestructura en AWS se despliega con Serverless Framework v3.
-> Los labs de Delta Lake corren en Databricks Free Edition (gratis).
+> El Lab 2 corre en AWS (S3, Glue, Athena) con Delta Lake, desplegado con Serverless Framework v3,
+> y se puede desarrollar completo en local con Docker.
 
 ---
 
 ## Laboratorios
 
-| Lab | Tema | Infraestructura | Semana |
-|-----|------|-----------------|--------|
-| [Lab 1](labs/01-modelado/) | Modelado OLTP → OLAP: de transacciones a esquema estrella | Docker + PostgreSQL | S1 |
-| [Lab 2](labs/02-data-lake/) | Data Lake en S3: zonas raw / processed / curated | AWS (free tier) | S2 |
-| [Lab 3](labs/03-lakehouse/) | Lakehouse con Delta Lake: ACID, time travel y schema evolution | Databricks Free Edition | S3 |
-| [Lab 4](labs/04-medallion/) | Arquitectura Medallion: Bronze → Silver → Gold con Spark | Databricks Free Edition | S4 |
-| [Lab 5](labs/05-streaming/) | Streaming de eventos de fraude con Kinesis + Lambda | AWS (de pago, < USD 0.50) | S5 |
+| Lab | Tema | Infraestructura | Peso | Entrega |
+|-----|------|-----------------|------|---------|
+| [Lab 1](labs/01-modelado/) | Modelado OLTP → OLAP: de transacciones a esquema estrella (SCD2) | Docker + PostgreSQL | 15% | Vie 23 oct |
+| [Lab 2](labs/02-lakehouse/) | Lakehouse end-to-end: S3 → Medallion con Delta Lake en Glue → Athena | Docker (local) + AWS | 30% | Vie 6 nov |
 
 ## Cómo funcionan los labs
 
-Cada lab es un **reto**: el código mecánico (conexiones, infraestructura, lectura y escritura de archivos) está dado, y las partes que aplican el tema de la semana están marcadas con `TODO` para que las completes tú.
+Cada lab es un **reto**: el código mecánico (conexiones, infraestructura, lectura y escritura de archivos) está dado, y las partes que aplican los temas del curso están marcadas con `TODO` para que las completes tú.
 
-Cada lab incluye **autoevaluación**: tests, scripts de validación o celdas de verificación que te dicen si tu solución es correcta (`✓`) o qué falla (`✗`). No los modifiques: son los mismos criterios con los que se califica la parte técnica. Las verificaciones confirman que tu código funciona; las decisiones de diseño y su justificación las evalúa tu informe.
+Cada lab incluye **autoevaluación**: tests, scripts de validación o validaciones dentro de los jobs que te dicen si tu solución es correcta (`✓`) o qué falla (`✗`). No los modifiques: son los mismos criterios con los que se califica la parte técnica. Las verificaciones confirman que tu código funciona; las decisiones de diseño y su justificación las evalúa tu informe.
 
 ---
 
@@ -31,9 +28,8 @@ Cada lab incluye **autoevaluación**: tests, scripts de validación o celdas de 
 
 - Docker Desktop ≥ 4.x con WSL 2 (Windows), o Docker Desktop / colima (Mac)
 - Python ≥ 3.11 y [`uv`](https://docs.astral.sh/uv/)
-- Cuenta de AWS con CLI configurada (`aws configure`) — desde el Lab 2
-- Node.js ≥ 20 y Serverless Framework v3 (`npm install -g serverless@3`) — desde el Lab 2
-- Cuenta gratuita en [Databricks Free Edition](https://www.databricks.com/learn/free-edition) — desde el Lab 3
+- Cuenta de AWS con CLI configurada (`aws configure`) — Lab 2
+- Node.js ≥ 20 y Serverless Framework v3 (`npm install -g serverless@3`) — Lab 2
 
 ---
 
@@ -50,7 +46,7 @@ uv sync
 # 3. Levantar PostgreSQL y pgAdmin (Lab 1)
 docker compose -f .docker/docker-compose.yml up -d postgres pgadmin
 
-# 4. Desde el Lab 2: variables de entorno de AWS
+# 4. Lab 2: variables de entorno de AWS
 cp .envs/aws.env.example .envs/aws.env
 # Edita .envs/aws.env con tus credenciales y tu STUDENT_ID
 ```
@@ -81,10 +77,7 @@ Los labs van construyendo la arquitectura completa de esta plataforma sesión a 
 ├── labs/
 │   ├── shared/       # Generador de datos sintéticos de PayTrack
 │   ├── 01-modelado/  # Lab 1: OLTP → OLAP (PostgreSQL)
-│   ├── 02-data-lake/ # Lab 2: Data Lake en S3 + Glue + Athena
-│   ├── 03-lakehouse/ # Lab 3: Delta Lake en Databricks
-│   ├── 04-medallion/ # Lab 4: Arquitectura Medallion en Databricks
-│   └── 05-streaming/ # Lab 5: Kinesis + Lambda
+│   └── 02-lakehouse/ # Lab 2: Lakehouse en AWS (S3 + Delta + Glue + Athena)
 └── pyproject.toml    # Dependencias de Python (uv)
 ```
 
@@ -92,4 +85,4 @@ Los labs van construyendo la arquitectura completa de esta plataforma sesión a 
 
 ## Licencia
 
-MIT — Andrés Acrea, EAFIT 2026
+MIT — Andrés Sacre Alzate, EAFIT 2026
