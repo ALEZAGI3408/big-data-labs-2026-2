@@ -1,0 +1,18 @@
+GroupAggregate  (cost=1034.96..1165.50 rows=4351 width=104) (actual time=7.266..8.607 rows=168 loops=1)
+  Group Key: (EXTRACT(dow FROM created_at)), (EXTRACT(hour FROM created_at))
+  Buffers: shared hit=587
+  ->  Sort  (cost=1034.96..1045.84 rows=4352 width=72) (actual time=7.247..7.436 rows=4270 loops=1)
+        Sort Key: (EXTRACT(dow FROM created_at)), (EXTRACT(hour FROM created_at))
+        Sort Method: quicksort  Memory: 392kB
+        Buffers: shared hit=587
+        ->  Bitmap Heap Scan on transactions t  (cost=94.05..771.93 rows=4352 width=72) (actual time=0.292..3.652 rows=4270 loops=1)
+              Recheck Cond: (created_at >= (CURRENT_DATE - 7))
+              Filter: ((status)::text = 'approved'::text)
+              Rows Removed by Filter: 3
+              Heap Blocks: exact=569
+              Buffers: shared hit=587
+              ->  Bitmap Index Scan on idx_txn_created_at  (cost=0.00..92.97 rows=4356 width=0) (actual time=0.232..0.232 rows=4273 loops=1)
+                    Index Cond: (created_at >= (CURRENT_DATE - 7))
+                    Buffers: shared hit=18
+Planning Time: 0.171 ms
+Execution Time: 8.735 ms

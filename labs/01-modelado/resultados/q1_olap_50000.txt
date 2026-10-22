@@ -1,0 +1,34 @@
+Sort  (cost=1353.54..1353.56 rows=7 width=80) (actual time=19.302..19.306 rows=7 loops=1)
+  Sort Key: (sum(f.amount_cop)) DESC
+  Sort Method: quicksort  Memory: 25kB
+  Buffers: shared hit=518
+  ->  HashAggregate  (cost=1353.34..1353.44 rows=7 width=80) (actual time=19.290..19.296 rows=7 loops=1)
+        Group Key: m.category
+        Batches: 1  Memory Usage: 24kB
+        Buffers: shared hit=518
+        ->  Hash Join  (cost=4.16..1225.72 rows=17016 width=16) (actual time=6.468..15.207 rows=16798 loops=1)
+              Hash Cond: (f.merchant_key = m.merchant_key)
+              Buffers: shared hit=518
+              ->  Hash Join  (cost=2.98..1156.21 rows=17016 width=12) (actual time=6.441..12.460 rows=16798 loops=1)
+                    Hash Cond: (f.date_key = d.date_key)
+                    Buffers: shared hit=517
+                    ->  Seq Scan on fact_transactions f  (cost=0.00..1016.00 rows=49950 width=16) (actual time=0.013..7.103 rows=49945 loops=1)
+                          Filter: is_approved
+                          Rows Removed by Filter: 55
+                          Buffers: shared hit=516
+                    ->  Hash  (cost=2.59..2.59 rows=31 width=4) (actual time=0.024..0.025 rows=31 loops=1)
+                          Buckets: 1024  Batches: 1  Memory Usage: 10kB
+                          Buffers: shared hit=1
+                          ->  Seq Scan on dim_date d  (cost=0.00..2.59 rows=31 width=4) (actual time=0.016..0.020 rows=31 loops=1)
+                                Filter: (full_date >= (CURRENT_DATE - 30))
+                                Rows Removed by Filter: 60
+                                Buffers: shared hit=1
+              ->  Hash  (cost=1.08..1.08 rows=8 width=12) (actual time=0.022..0.022 rows=8 loops=1)
+                    Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                    Buffers: shared hit=1
+                    ->  Seq Scan on dim_merchant m  (cost=0.00..1.08 rows=8 width=12) (actual time=0.018..0.019 rows=8 loops=1)
+                          Buffers: shared hit=1
+Planning:
+  Buffers: shared hit=8
+Planning Time: 0.389 ms
+Execution Time: 19.356 ms

@@ -1,0 +1,37 @@
+Sort  (cost=10899.51..10899.52 rows=3 width=54) (actual time=171.524..179.177 rows=3 loops=1)
+  Sort Key: (round(((100.0 * (sum(CASE WHEN t.is_fraud THEN 1 ELSE 0 END))::numeric) / (count(*))::numeric), 2)) DESC
+  Sort Method: quicksort  Memory: 25kB
+  Buffers: shared hit=5196 read=532
+  ->  Finalize GroupAggregate  (cost=10898.67..10899.48 rows=3 width=54) (actual time=171.501..179.159 rows=3 loops=1)
+        Group Key: c.segment
+        Buffers: shared hit=5196 read=532
+        ->  Gather Merge  (cost=10898.67..10899.37 rows=6 width=22) (actual time=171.487..179.142 rows=9 loops=1)
+              Workers Planned: 2
+              Workers Launched: 2
+              Buffers: shared hit=5196 read=532
+              ->  Sort  (cost=9898.65..9898.66 rows=3 width=22) (actual time=134.304..134.306 rows=3 loops=3)
+                    Sort Key: c.segment
+                    Sort Method: quicksort  Memory: 25kB
+                    Buffers: shared hit=5196 read=532
+                    Worker 0:  Sort Method: quicksort  Memory: 25kB
+                    Worker 1:  Sort Method: quicksort  Memory: 25kB
+                    ->  Partial HashAggregate  (cost=9898.59..9898.62 rows=3 width=22) (actual time=134.228..134.230 rows=3 loops=3)
+                          Group Key: c.segment
+                          Batches: 1  Memory Usage: 24kB
+                          Buffers: shared hit=5180 read=532
+                          Worker 0:  Batches: 1  Memory Usage: 24kB
+                          Worker 1:  Batches: 1  Memory Usage: 24kB
+                          ->  Hash Join  (cost=19.25..8336.10 rows=208333 width=7) (actual time=1.380..94.629 rows=166667 loops=3)
+                                Hash Cond: ((t.customer_id)::text = (c.customer_id)::text)
+                                Buffers: shared hit=5180 read=532
+                                ->  Parallel Seq Scan on transactions t  (cost=0.00..7765.33 rows=208333 width=9) (actual time=0.049..33.655 rows=166667 loops=3)
+                                      Buffers: shared hit=5150 read=532
+                                ->  Hash  (cost=13.00..13.00 rows=500 width=14) (actual time=1.266..1.266 rows=500 loops=3)
+                                      Buckets: 1024  Batches: 1  Memory Usage: 31kB
+                                      Buffers: shared hit=24
+                                      ->  Seq Scan on customers c  (cost=0.00..13.00 rows=500 width=14) (actual time=0.958..1.111 rows=500 loops=3)
+                                            Buffers: shared hit=24
+Planning:
+  Buffers: shared hit=14
+Planning Time: 0.568 ms
+Execution Time: 179.270 ms

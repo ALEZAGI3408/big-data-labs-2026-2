@@ -1,0 +1,22 @@
+Sort  (cost=1595.70..1595.71 rows=3 width=54) (actual time=24.545..24.548 rows=3 loops=1)
+  Sort Key: (round(((100.0 * (sum(CASE WHEN t.is_fraud THEN 1 ELSE 0 END))::numeric) / (count(*))::numeric), 2)) DESC
+  Sort Method: quicksort  Memory: 25kB
+  Buffers: shared hit=577
+  ->  HashAggregate  (cost=1595.61..1595.68 rows=3 width=54) (actual time=24.534..24.538 rows=3 loops=1)
+        Group Key: c.segment
+        Batches: 1  Memory Usage: 24kB
+        Buffers: shared hit=577
+        ->  Hash Join  (cost=19.25..1220.61 rows=50000 width=7) (actual time=0.164..16.251 rows=50000 loops=1)
+              Hash Cond: ((t.customer_id)::text = (c.customer_id)::text)
+              Buffers: shared hit=577
+              ->  Seq Scan on transactions t  (cost=0.00..1069.00 rows=50000 width=9) (actual time=0.017..3.092 rows=50000 loops=1)
+                    Buffers: shared hit=569
+              ->  Hash  (cost=13.00..13.00 rows=500 width=14) (actual time=0.141..0.142 rows=500 loops=1)
+                    Buckets: 1024  Batches: 1  Memory Usage: 31kB
+                    Buffers: shared hit=8
+                    ->  Seq Scan on customers c  (cost=0.00..13.00 rows=500 width=14) (actual time=0.013..0.071 rows=500 loops=1)
+                          Buffers: shared hit=8
+Planning:
+  Buffers: shared hit=12
+Planning Time: 0.290 ms
+Execution Time: 24.585 ms

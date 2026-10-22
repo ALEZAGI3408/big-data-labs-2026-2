@@ -72,14 +72,37 @@ FROM generate_series(0, 23) AS h, generate_series(0, 59) AS m;
 # - Es una dimensión SCD Tipo 2. En esta carga inicial cada cliente tiene una
 #   sola versión: ¿qué valores deben tener valid_from, valid_to e is_current?
 SQL_DIM_CUSTOMER = """
--- TODO: INSERT INTO dw.dim_customer (...) SELECT ... FROM oltp.customers;
+INSERT INTO dw.dim_customer
+    (customer_id, city, segment, income_band, customer_since,
+     valid_from, valid_to, is_current)
+SELECT
+    c.customer_id,
+    c.city,
+    c.segment,
+    CASE
+        WHEN c.monthly_income_cop <  4000000 THEN 'low'
+        WHEN c.monthly_income_cop < 10000000 THEN 'middle'
+        ELSE 'high'
+    END                         AS income_band,
+    c.created_at::DATE          AS customer_since,
+    c.created_at                AS valid_from,   -- primera versión: desde que existe el cliente
+    TIMESTAMP '9999-12-31'      AS valid_to,     -- abierta: sigue vigente
+    TRUE                        AS is_current
+FROM oltp.customers c;
 """
 
 
 # ── TODO 2: dim_merchant ─────────────────────────────────────────────────────
 # Un registro por comercio desde oltp.merchants.
 SQL_DIM_MERCHANT = """
--- TODO: INSERT INTO dw.dim_merchant (...) SELECT ... FROM oltp.merchants;
+INSERT INTO dw.dim_merchant (merchant_id, merchant_name, category, city, is_online)
+SELECT
+    m.merchant_id,
+    m.name,
+    m.category,
+    m.city,
+    m.city = 'Online' AS is_online
+FROM oltp.merchants m;
 """
 
 
@@ -90,7 +113,15 @@ SQL_DIM_MERCHANT = """
 #   nequi, daviplata        → 'digital_wallet'
 #   pse                     → 'bank_transfer'
 SQL_DIM_PAYMENT_METHOD = """
--- TODO: INSERT INTO dw.dim_payment_method (...) SELECT ... FROM oltp.payment_methods;
+INSERT INTO dw.dim_payment_method (method_name, method_type)
+SELECT
+    p.method_name,
+    CASE
+        WHEN p.method_name IN ('credit_card', 'debit_card') THEN 'card'
+        WHEN p.method_name IN ('nequi', 'daviplata')        THEN 'digital_wallet'
+        WHEN p.method_name = 'pse'                          THEN 'bank_transfer'
+    END AS method_type
+FROM oltp.payment_methods p;
 """
 
 
@@ -106,7 +137,39 @@ SQL_DIM_PAYMENT_METHOD = """
 # - Traer el risk_score de oltp.fraud_events cuando exista (no todas las
 #   transacciones tienen evento de fraude: ¿qué tipo de JOIN necesitas?).
 SQL_FACT = """
--- TODO: INSERT INTO dw.fact_transactions (...) SELECT ... FROM oltp.transactions ...;
+INSERT INTO dw.fact_transactions
+    (transaction_id, date_key, time_key, customer_key, merchant_key,
+     payment_method_key, amount_cop, is_fraud, is_approved, fraud_risk_score)
+SELECT
+    t.transaction_id,
+    TO_CHAR(t.created_at, 'YYYYMMDD')::INT    AS date_key,
+    TO_CHAR(t.created_at, 'HH24MI')::INT      AS time_key,
+    dc.customer_key,
+    dm.merchant_key,
+    dp.payment_method_key,
+    t.amount_cop,
+    t.is_fraud,
+    t.status = 'approved'                     AS is_approved,
+    fe.risk_score                             AS fraud_risk_score
+FROM oltp.transactions t
+JOIN oltp.payment_methods pm ON pm.method_id = t.method_id
+-- SCD2: versión del cliente vigente en el momento de la transacción
+JOIN dw.dim_customer dc
+  ON  dc.customer_id = t.customer_id
+  AND t.created_at >= dc.valid_from
+  AND t.created_at <  dc.valid_to
+JOIN dw.dim_merchant       dm ON dm.merchant_id = t.merchant_id
+JOIN dw.dim_payment_method dp ON dp.method_name = pm.method_name
+-- LEFT JOIN: la mayoría de transacciones no tiene evento de fraude.
+-- Se agrega por transacción para no duplicar filas si hubiera varios eventos.
+LEFT JOIN (
+    SELECT transaction_id, MAX(risk_score) AS risk_score
+    FROM oltp.fraud_events
+    GROUP BY transaction_id
+) fe ON fe.transaction_id = t.transaction_id
+-- Orden cronológico, como en una carga incremental diaria: las filas de un
+-- mismo día quedan juntas en disco y el índice por date_key es selectivo.
+ORDER BY t.created_at;
 """
 
 

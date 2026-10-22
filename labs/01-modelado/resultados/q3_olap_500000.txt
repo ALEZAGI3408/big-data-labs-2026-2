@@ -1,0 +1,31 @@
+Sort  (cost=3719.97..3720.27 rows=120 width=44) (actual time=45.197..45.208 rows=168 loops=1)
+  Sort Key: d.day_of_week, t.hour
+  Sort Method: quicksort  Memory: 34kB
+  Buffers: shared hit=522
+  ->  HashAggregate  (cost=3714.32..3715.82 rows=120 width=44) (actual time=45.055..45.123 rows=168 loops=1)
+        Group Key: d.day_of_week, t.hour
+        Batches: 1  Memory Usage: 160kB
+        Buffers: shared hit=522
+        ->  Hash Join  (cost=41.82..3275.29 rows=43903 width=12) (actual time=0.700..30.903 rows=43016 loops=1)
+              Hash Cond: (f.time_key = t.time_key)
+              Buffers: shared hit=522
+              ->  Nested Loop  (cost=0.42..3118.31 rows=43903 width=14) (actual time=0.084..19.195 rows=43016 loops=1)
+                    Buffers: shared hit=513
+                    ->  Seq Scan on dim_date d  (cost=0.00..2.59 rows=8 width=6) (actual time=0.037..0.065 rows=8 loops=1)
+                          Filter: (full_date >= (CURRENT_DATE - 7))
+                          Rows Removed by Filter: 83
+                          Buffers: shared hit=1
+                    ->  Index Scan using idx_fact_date on fact_transactions f  (cost=0.42..334.58 rows=5488 width=16) (actual time=0.017..1.752 rows=5377 loops=8)
+                          Index Cond: (date_key = d.date_key)
+                          Filter: is_approved
+                          Rows Removed by Filter: 7
+                          Buffers: shared hit=512
+              ->  Hash  (cost=23.40..23.40 rows=1440 width=6) (actual time=0.585..0.586 rows=1440 loops=1)
+                    Buckets: 2048  Batches: 1  Memory Usage: 73kB
+                    Buffers: shared hit=9
+                    ->  Seq Scan on dim_time t  (cost=0.00..23.40 rows=1440 width=6) (actual time=0.021..0.226 rows=1440 loops=1)
+                          Buffers: shared hit=9
+Planning:
+  Buffers: shared hit=10
+Planning Time: 0.603 ms
+Execution Time: 45.321 ms

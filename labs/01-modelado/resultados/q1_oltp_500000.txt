@@ -1,0 +1,39 @@
+Sort  (cost=11680.22..11680.23 rows=7 width=80) (actual time=130.128..138.135 rows=7 loops=1)
+  Sort Key: (sum(t.amount_cop)) DESC
+  Sort Method: quicksort  Memory: 25kB
+  Buffers: shared hit=4915 read=792
+  ->  Finalize GroupAggregate  (cost=11678.24..11680.12 rows=7 width=80) (actual time=129.560..138.113 rows=7 loops=1)
+        Group Key: m.category
+        Buffers: shared hit=4915 read=792
+        ->  Gather Merge  (cost=11678.24..11679.87 rows=14 width=80) (actual time=129.541..137.579 rows=21 loops=1)
+              Workers Planned: 2
+              Workers Launched: 2
+              Buffers: shared hit=4915 read=792
+              ->  Sort  (cost=10678.22..10678.23 rows=7 width=80) (actual time=94.536..94.540 rows=7 loops=3)
+                    Sort Key: m.category
+                    Sort Method: quicksort  Memory: 26kB
+                    Buffers: shared hit=4915 read=792
+                    Worker 0:  Sort Method: quicksort  Memory: 26kB
+                    Worker 1:  Sort Method: quicksort  Memory: 26kB
+                    ->  Partial HashAggregate  (cost=10678.03..10678.12 rows=7 width=80) (actual time=94.446..94.454 rows=7 loops=3)
+                          Group Key: m.category
+                          Batches: 1  Memory Usage: 24kB
+                          Buffers: shared hit=4899 read=792
+                          Worker 0:  Batches: 1  Memory Usage: 24kB
+                          Worker 1:  Batches: 1  Memory Usage: 24kB
+                          ->  Hash Join  (cost=1.18..10138.65 rows=71918 width=16) (actual time=0.993..75.776 rows=56845 loops=3)
+                                Hash Cond: ((t.merchant_id)::text = (m.merchant_id)::text)
+                                Buffers: shared hit=4899 read=792
+                                ->  Parallel Seq Scan on transactions t  (cost=0.00..9848.67 rows=71918 width=13) (actual time=0.065..58.017 rows=56845 loops=3)
+                                      Filter: (((status)::text = 'approved'::text) AND (created_at >= (CURRENT_DATE - 30)))
+                                      Rows Removed by Filter: 109822
+                                      Buffers: shared hit=4890 read=792
+                                ->  Hash  (cost=1.08..1.08 rows=8 width=13) (actual time=0.862..0.862 rows=8 loops=3)
+                                      Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                                      Buffers: shared hit=3
+                                      ->  Seq Scan on merchants m  (cost=0.00..1.08 rows=8 width=13) (actual time=0.839..0.841 rows=8 loops=3)
+                                            Buffers: shared hit=3
+Planning:
+  Buffers: shared hit=4
+Planning Time: 0.470 ms
+Execution Time: 138.356 ms

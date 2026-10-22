@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Informe Lab 1 · Modelado OLTP → OLAP</title>
+<style>
+  @page { size: Letter; margin: 1.5cm 1.6cm 1.5cm 1.6cm; }
+  * { box-sizing: border-box; }
+  body { font-family: "Segoe UI", Calibri, Arial, sans-serif; font-size: 9.6pt; line-height: 1.36; color: #1d1d1f; margin: 0; }
+  header { border-bottom: 2px solid #b85450; padding-bottom: 5px; margin-bottom: 8px; }
+  h1 { font-size: 15pt; margin: 0 0 2px; }
+  .meta { color: #555; font-size: 8.8pt; }
+  h2 { font-size: 11.2pt; color: #b85450; margin: 11px 0 4px; border-bottom: 1px solid #e4c4c3; padding-bottom: 1px; }
+  h3 { font-size: 9.8pt; margin: 7px 0 2px; }
+  p { margin: 3px 0 5px; text-align: justify; }
+  ul { margin: 2px 0 5px; padding-left: 16px; }
+  li { margin: 1px 0; text-align: justify; }
+  table { border-collapse: collapse; width: 100%; margin: 4px 0 6px; font-size: 8.6pt; }
+  th, td { border: 1px solid #ccc; padding: 2px 5px; vertical-align: top; text-align: left; }
+  th { background: #f4e3e2; }
+  td.n, th.n { text-align: right; white-space: nowrap; }
+  code { font-family: Consolas, monospace; font-size: 8.5pt; background: #f3f3f3; padding: 0 2px; border-radius: 2px; }
+  .good { color: #2e7d32; font-weight: 600; }
+  .note { font-size: 8.3pt; color: #555; }
+  .box { background: #fff8e1; border-left: 3px solid #d6b656; padding: 4px 8px; margin: 5px 0; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Lab 1 · Modelado OLTP → OLAP: de transacciones a esquema estrella (SCD2)</h1>
+  <div class="meta">SI7006 Almacenamiento y Procesamiento de Grandes Datos · Maestría en Ingeniería de Datos, EAFIT · Caso PayTrack Colombia ·
+  Estudiante: <b>Alejandro Zapata</b> · 23 de octubre de 2026</div>
+</header>
+
+<p><b>Entorno.</b> PostgreSQL 16, datos sintéticos de <code>generate_data.py</code> (500 clientes, 8 comercios, 5 métodos, 90 días) con
+<b>50.000</b> y <b>500.000</b> transacciones. Los tiempos son la mediana de 5 ejecuciones de <code>EXPLAIN (ANALYZE, BUFFERS)</code> con caché
+caliente (script <code>benchmark.py</code>; planes completos en <code>resultados/</code>). Validaciones: <code>load_star.py</code>
+<span class="good">9/9 ✓</span> y <code>check_queries.py</code> <span class="good">3/3 ✓</span> con ambos volúmenes.</p>
+
+<h2>Parte A — Diagnóstico del OLTP</h2>
+<table>
+  <tr><th>Consulta</th><th class="n">50K</th><th class="n">500K</th><th>Operaciones que dominan el plan (500K)</th></tr>
+  <tr><td>Q1 monto por categoría, 30 días</td><td class="n">13,0 ms</td><td class="n">143,5 ms</td>
+      <td>Parallel Seq Scan de <code>transactions</code> (descarta 330K filas por filtro) → Hash Join con <code>merchants</code> por <code>VARCHAR</code> → HashAggregate parcial + Gather Merge + Sort. Con 50K usa el índice de <code>created_at</code>, pero el Bitmap Heap Scan visita 569 de ~600 páginas.</td></tr>
+  <tr><td>Q2 tasa de fraude por segmento</td><td class="n">24,4 ms</td><td class="n">179,1 ms</td>
+      <td>Parallel Seq Scan completo (500K filas, 5.728 páginas) → Hash Join con <code>customers</code> por <code>VARCHAR(10)</code> → agregación de todas las filas. Sin filtro: ningún índice puede ayudar.</td></tr>
+  <tr><td>Q3 volumen por día y hora, 7 días</td><td class="n">8,7 ms</td><td class="n">126,0 ms</td>
+      <td>Bitmap Index Scan en <code>idx_txn_created_at</code> (43K filas) → Bitmap Heap Scan que lee <b>5.680 de 5.682 páginas</b> → <code>EXTRACT(DOW/HOUR)</code> fila a fila → Sort de 43K filas por expresiones → GroupAggregate.</td></tr>
+</table>
+<p><b>¿Por qué el 3FN obliga a este trabajo?</b> (1) Los atributos de análisis (<code>category</code>, <code>segment</code>) viven en otras tablas,
+así que toda pregunta paga un join, y lo hace sobre llaves naturales <code>VARCHAR</code>. (2) Los atributos de calendario (día de la semana, hora)
+no existen: se recalculan con <code>EXTRACT</code> en cada fila. Esa expresión no es indexable sin un índice funcional y obliga a ordenar por ella.
+(3) Las filas quedan en el orden de llegada, no en el de las preguntas. En los datos generados la correlación física de <code>created_at</code> es
+<b>−0,002</b>, así que el índice localiza 7 días de filas pero estas están repartidas en toda la tabla y el motor termina leyendo cada página.
+(4) Los índices del OLTP sirven para búsquedas puntuales (<code>customer_id</code>, PK), no para barrer rangos y agregar millones de filas.</p>
+<p><b>Con 500K transacciones diarias durante un año</b> la tabla llega a ~182,5 M filas (≈16 GB de heap y ≈13 GB de índices, extrapolando
+los 44 MB + 37 MB medidos para 500K). Q2 es O(N): extrapolando linealmente 179 ms × 365 ≈ <b>65 s</b>, y eso suponiendo todo en memoria.
+Como 29 GB no caben en <code>shared_buffers</code>, la lectura sería de disco y tardaría minutos. Q1 (30 días ≈ 15 M filas) y Q3
+(7 días ≈ 3,5 M) tardarían decenas de segundos. Además competirían por E/S, caché y CPU con las ~6 escrituras por segundo del negocio, que es justo
+lo que un sistema transaccional no puede permitirse.</p>
+
+<h2>Parte B — Decisiones de diseño del esquema estrella</h2>
+<p><b>Proceso de negocio:</b> procesamiento de pagos. <b>Grano:</b> <i>una fila por transacción de pago</i> (el nivel atómico de
+<code>oltp.transactions</code>). Elegimos el grano más fino porque permite responder cualquier agregación futura (por minuto, cliente o método),
+cuadra 1:1 con la fuente (validado: conteos, montos, fraudes y aprobadas) y no obliga a rediseñar si aparece una pregunta nueva.
+<code>transaction_id</code> se guarda como <b>dimensión degenerada</b> y es la PK de la tabla de hechos: garantiza el grano y conserva la trazabilidad hacia el OLTP.</p>
+<table>
+  <tr><th>Dimensión</th><th>Atributos</th><th>Decisión</th></tr>
+  <tr><td><code>dim_date</code> / <code>dim_time</code></td><td>año, trimestre, mes, semana, día de la semana, fin de semana, festivo / hora, minuto, franja del día</td>
+      <td>Separadas: 91 + 1.440 filas, en vez de una dimensión fecha-minuto de 131K filas. Precalculan lo que el OLTP hacía con <code>EXTRACT</code>.</td></tr>
+  <tr><td><code>dim_customer</code> (SCD2)</td><td><code>customer_id</code> (NK), city, segment, income_band, customer_since, valid_from, valid_to, is_current</td>
+      <td>Versionada. Índice único parcial: una sola versión vigente por cliente.</td></tr>
+  <tr><td><code>dim_merchant</code> (SCD1)</td><td><code>merchant_id</code> (NK), merchant_name, category, city, is_online</td>
+      <td>Se sobrescribe: un cambio de nombre no altera el análisis histórico. <code>is_online</code> se deriva de <code>city = 'Online'</code>.</td></tr>
+  <tr><td><code>dim_payment_method</code></td><td><code>method_name</code> (NK), method_type</td>
+      <td>Enriquecida: <code>method_type</code> (card / digital_wallet / bank_transfer) no existe en el OLTP.</td></tr>
+</table>
+<p><b>Lo que NO llega al DW:</b> <code>name</code> y <code>email</code> son datos personales sin valor analítico. El DW tiene muchos lectores
+y la Ley 1581 de 2012 (habeas data) exige minimizar esos datos. El ingreso exacto (<code>monthly_income_cop</code>) se reemplaza por
+<code>income_band</code> (low &lt; 4 M, middle 4–10 M, high ≥ 10 M): conserva el valor analítico y reduce la sensibilidad. El <code>status</code>
+textual se convierte en la medida <code>is_approved</code>. Del evento de fraude solo pasa <code>risk_score</code>; <code>pattern</code> y
+<code>detected_at</code> pertenecen a otro proceso de negocio (una futura <code>fact_fraud_event</code>). Tampoco pasan las llaves técnicas del
+OLTP (<code>method_id</code>).</p>
+<p><b>Medidas.</b> <code>amount_cop</code>: <b>aditiva</b>, se suma por cualquier dimensión. <code>is_fraud</code> e <code>is_approved</code>: banderas
+que son <b>aditivas</b> como 0/1 (<code>SUM(CASE…)</code> = conteo). Las tasas (p. ej. % de fraude) <b>no son aditivas</b>: no se almacenan,
+se calculan al consultar a partir de sus componentes aditivos, como en Q2. <code>fraud_risk_score</code>: <b>no aditiva</b> (solo AVG/MAX);
+queda NULL cuando no hubo evento, por eso se carga con <code>LEFT JOIN</code> y <code>AVG</code> ignora esos valores. Este proceso no tiene medidas
+semiaditivas; aparecerían en un snapshot de saldos de billetera, que se suman entre clientes pero no a lo largo del tiempo.</p>
+<p><b>¿Por qué surrogate keys?</b> (1) Con SCD2 un mismo <code>customer_id</code> tiene varias filas, así que la llave natural no puede ser PK.
+(2) Aíslan al DW de la fuente: reasignación o reutilización de IDs, migraciones, o integrar otra fuente (otro banco) donde <code>C000001</code>
+sea otro cliente. <code>method_id</code> es un SERIAL que depende del orden de inserción en el OLTP. (3) Un <code>INT</code> de 4 bytes hace los
+joins e índices más pequeños que un <code>VARCHAR</code>. (4) Permiten filas especiales (desconocido, <i>late-arriving</i>).</p>
+<p><b>¿Por qué SCD Tipo 2 en cliente?</b> <code>segment</code> (mass → premium → high_value) y <code>city</code> cambian con el tiempo; el propio
+generador lo simula en <code>change_customers()</code>. Si se sobrescribe (SCD1), todas las transacciones pasadas se reasignan al segmento nuevo.
+Por ejemplo, un cliente que cometió fraude siendo <i>mass</i> y luego sube a <i>premium</i> inflaría retroactivamente la tasa de fraude de
+<i>premium</i>, y el reporte del mes pasado cambiaría sin que cambiaran sus datos. Con SCD2 cada versión tiene un intervalo semiabierto
+<code>[valid_from, valid_to)</code>, y la carga de hechos une cada transacción con la versión vigente en su <code>created_at</code>.
+En la carga inicial: <code>valid_from = created_at</code> del cliente, <code>valid_to = 9999-12-31</code>, <code>is_current = TRUE</code>.
+Por eso Q2 <b>no filtra por <code>is_current</code></b>: <code>customer_key</code> ya apunta a la versión correcta ("tal como era"), y filtrar
+descartaría las transacciones ligadas a versiones históricas.</p>
+<p><b>Decisiones físicas.</b> Todas las FK son <code>NOT NULL</code> con <code>REFERENCES</code> (integridad referencial). La tabla de hechos se
+carga en <b>orden cronológico</b> (<code>ORDER BY created_at</code>), como haría una carga incremental diaria. Así, la correlación física de
+<code>date_key</code> queda en <b>1,000</b>, condición necesaria para que el índice de fechas sirva (Parte D).</p>
+
+<h2>Parte D — Comparación de rendimiento OLTP vs OLAP</h2>
+<table>
+  <tr><th>Consulta</th><th class="n">OLTP 50K</th><th class="n">OLAP 50K</th><th class="n">OLTP 500K</th><th class="n">OLAP 500K</th><th class="n">Buffers leídos 500K (OLTP → OLAP)</th><th>Plan OLAP</th></tr>
+  <tr><td>Q1</td><td class="n">13,0</td><td class="n">19,4</td><td class="n">143,5</td><td class="n">151,1</td><td class="n">5.707 → 5.205</td><td>Parallel Seq Scan + 2 Hash Join (dim_date, dim_merchant)</td></tr>
+  <tr><td>Q2</td><td class="n">24,4</td><td class="n">24,6</td><td class="n">179,1</td><td class="n">183,2</td><td class="n">5.728 → 5.217</td><td>Parallel Seq Scan + Hash Join (dim_customer)</td></tr>
+  <tr><td>Q3</td><td class="n">8,7</td><td class="n"><b>3,6</b></td><td class="n">126,0</td><td class="n"><b>47,5</b> (30,1*)</td><td class="n"><b>5.839 → 522</b></td><td>Nested Loop: dim_date (8 filas) × Index Scan <code>idx_fact_date</code></td></tr>
+</table>
+<p class="note">Tiempos en ms. *Con solo <code>idx_fact_date</code> en el experimento de índices. Con 500K las consultas que barren mucho usan 2 workers paralelos.</p>
+<p><b>Q3 es 2,4–4,2× más rápida en OLAP y lee 11× menos páginas.</b> El filtro de 7 días se resuelve sobre <code>dim_date</code> (8 filas), y por
+cada <code>date_key</code> un Index Scan lee un bloque contiguo de ~5.400 hechos. Día de la semana y hora son atributos precalculados en las
+dimensiones (Hash Join con <code>dim_time</code>), no <code>EXTRACT</code> por fila, y el agrupamiento es un HashAggregate en vez de
+Sort + GroupAggregate. En el OLTP el índice sobre <code>created_at</code> no ahorra E/S porque las filas están desordenadas.</p>
+<p><b>Q1 y Q2 cuestan prácticamente lo mismo en ambos modelos.</b> Q2 agrega el 100 % de los hechos y Q1 el 33 % (30 de 91 días). En ambos casos
+el plan óptimo es leer la tabla completa en paralelo y unirla por hash con dimensiones diminutas, y eso hacen los dos modelos. La tabla de hechos es
+solo un 9 % más pequeña (40 vs 44 MB): en un almacenamiento por filas cada fila se lee completa, y el <code>VARCHAR(20)</code> de
+<code>transaction_id</code> domina su ancho. Con 50K, Q1 en OLAP es algo más lenta porque PostgreSQL no tiene <i>star transformation</i>:
+no sabe qué <code>date_key</code> cumplen el filtro de <code>dim_date</code> hasta hacer el join, así que hace hash join sobre todos los hechos.
+La ventaja del modelo estrella en Q1/Q2 no es la velocidad en este motor. Es tener consultas simples y homogéneas, resultados reproducibles
+(SCD2), aislamiento de la carga transaccional y una estructura lista para almacenamiento columnar o particionado (Lab 2: Parquet/Delta + Athena),
+donde la tabla de hechos se lee solo en las 2–3 columnas que usa cada consulta.</p>
+
+<h3>Experimento de índices sobre <code>fact_transactions</code> (500K, ms)</h3>
+<table>
+  <tr><th>Escenario</th><th class="n">Q1</th><th class="n">Q2</th><th class="n">Q3</th><th>Plan</th></tr>
+  <tr><td>Sin índices</td><td class="n">178,5</td><td class="n">238,3</td><td class="n">144,4</td><td>Seq Scan en las tres</td></tr>
+  <tr><td>Solo <code>idx_fact_date</code></td><td class="n">144,4</td><td class="n">160,9</td><td class="n"><b>30,1</b></td><td>Q3 cambia a Nested Loop + Index Scan</td></tr>
+  <tr><td>Solo <code>idx_fact_customer</code></td><td class="n">154,4</td><td class="n">205,3</td><td class="n">119,1</td><td>Seq Scan en las tres (índice ignorado)</td></tr>
+  <tr><td>Solo <code>idx_fact_merchant</code></td><td class="n">138,2</td><td class="n">165,5</td><td class="n">104,6</td><td>Seq Scan en las tres (índice ignorado)</td></tr>
+  <tr><td>Los tres</td><td class="n">131,9</td><td class="n">165,1</td><td class="n">29,5</td><td>Igual que solo <code>idx_fact_date</code></td></tr>
+</table>
+<p><b>No todos ayudan.</b> Solo <code>idx_fact_date</code> cambia un plan. En Q1 y Q2 el plan es idéntico en los cinco escenarios, así que las
+diferencias de ±20 % son ruido de medición (carga del equipo), no efecto de los índices. <code>idx_fact_customer</code> e
+<code>idx_fact_merchant</code> nunca se usan en estas consultas porque agregan grupos enteros. Cada índice ocupa ~3,5 MB por cada 500K filas
+y encarece todas las cargas. Decisión final (<code>star_schema.sql</code>): conservar <code>idx_fact_date</code>; conservar
+<code>idx_fact_customer</code> para el <i>drill-down</i> de un cliente (investigación de fraude, 0,2 % de filas, muy selectivo); y
+<b>no</b> indexar <code>merchant_key</code> (8 valores, ~12,5 % de filas cada uno).</p>
+<div class="box"><b>¿Por qué el optimizador prefiere un <i>sequential scan</i>?</b> Su modelo de costos asume que una página leída al azar cuesta
+4× una secuencial (<code>random_page_cost = 4</code>), y un Index Scan además consulta el índice y puede volver varias veces a la misma página.
+Cuando la consulta necesita una fracción grande de las filas (Q1: 33 %, Q2: 100 %), o las filas buscadas están dispersas (correlación ≈ 0, como en
+el OLTP), terminaría leyendo casi todas las páginas de forma aleatoria. Leerlas en orden, y en paralelo, es más barato. El índice solo gana si la
+consulta es selectiva <b>y</b> las filas están agrupadas físicamente. Por eso la carga cronológica fue la decisión que hizo útil a
+<code>idx_fact_date</code>. A mayor escala, un índice BRIN sobre <code>date_key</code> (pocos KB) o particionar la tabla de hechos por mes
+lograrían lo mismo para Q1.</div>
+
+<h3>Diagrama del esquema estrella (archivo fuente: <code>diagrama_esquema_estrella.drawio</code>)</h3>
+<div style="text-align:center"><img src="diagrama_esquema_estrella.png" style="max-width:100%;max-height:10.6cm;border:1px solid #ddd" alt="Esquema estrella PayTrack"></div>
+
+</body>
+</html>

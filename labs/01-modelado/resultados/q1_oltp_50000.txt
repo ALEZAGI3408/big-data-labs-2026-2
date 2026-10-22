@@ -1,0 +1,29 @@
+Sort  (cost=1462.00..1462.01 rows=7 width=80) (actual time=12.985..12.989 rows=7 loops=1)
+  Sort Key: (sum(t.amount_cop)) DESC
+  Sort Method: quicksort  Memory: 25kB
+  Buffers: shared hit=627
+  ->  HashAggregate  (cost=1461.79..1461.90 rows=7 width=80) (actual time=12.963..12.969 rows=7 loops=1)
+        Group Key: m.category
+        Batches: 1  Memory Usage: 24kB
+        Buffers: shared hit=627
+        ->  Hash Join  (cost=357.22..1334.42 rows=16983 width=16) (actual time=0.877..9.083 rows=16798 loops=1)
+              Hash Cond: ((t.merchant_id)::text = (m.merchant_id)::text)
+              Buffers: shared hit=627
+              ->  Bitmap Heap Scan on transactions t  (cost=356.04..1265.04 rows=16983 width=13) (actual time=0.838..5.643 rows=16798 loops=1)
+                    Recheck Cond: (created_at >= (CURRENT_DATE - 30))
+                    Filter: ((status)::text = 'approved'::text)
+                    Rows Removed by Filter: 17
+                    Heap Blocks: exact=569
+                    Buffers: shared hit=626
+                    ->  Bitmap Index Scan on idx_txn_created_at  (cost=0.00..351.80 rows=17000 width=0) (actual time=0.769..0.770 rows=16815 loops=1)
+                          Index Cond: (created_at >= (CURRENT_DATE - 30))
+                          Buffers: shared hit=57
+              ->  Hash  (cost=1.08..1.08 rows=8 width=13) (actual time=0.029..0.029 rows=8 loops=1)
+                    Buckets: 1024  Batches: 1  Memory Usage: 9kB
+                    Buffers: shared hit=1
+                    ->  Seq Scan on merchants m  (cost=0.00..1.08 rows=8 width=13) (actual time=0.015..0.017 rows=8 loops=1)
+                          Buffers: shared hit=1
+Planning:
+  Buffers: shared hit=4
+Planning Time: 0.295 ms
+Execution Time: 13.069 ms

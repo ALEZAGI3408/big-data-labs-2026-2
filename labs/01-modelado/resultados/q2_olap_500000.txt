@@ -1,0 +1,37 @@
+Sort  (cost=10370.51..10370.52 rows=3 width=54) (actual time=211.343..219.784 rows=3 loops=1)
+  Sort Key: (round(((100.0 * (sum(CASE WHEN f.is_fraud THEN 1 ELSE 0 END))::numeric) / (count(*))::numeric), 2)) DESC
+  Sort Method: quicksort  Memory: 25kB
+  Buffers: shared hit=5217
+  ->  Finalize GroupAggregate  (cost=10369.67..10370.48 rows=3 width=54) (actual time=211.317..219.766 rows=3 loops=1)
+        Group Key: c.segment
+        Buffers: shared hit=5217
+        ->  Gather Merge  (cost=10369.67..10370.37 rows=6 width=22) (actual time=211.297..219.742 rows=9 loops=1)
+              Workers Planned: 2
+              Workers Launched: 2
+              Buffers: shared hit=5217
+              ->  Sort  (cost=9369.65..9369.66 rows=3 width=22) (actual time=171.079..171.082 rows=3 loops=3)
+                    Sort Key: c.segment
+                    Sort Method: quicksort  Memory: 25kB
+                    Buffers: shared hit=5217
+                    Worker 0:  Sort Method: quicksort  Memory: 25kB
+                    Worker 1:  Sort Method: quicksort  Memory: 25kB
+                    ->  Partial HashAggregate  (cost=9369.59..9369.62 rows=3 width=22) (actual time=170.996..171.000 rows=3 loops=3)
+                          Group Key: c.segment
+                          Batches: 1  Memory Usage: 24kB
+                          Buffers: shared hit=5201
+                          Worker 0:  Batches: 1  Memory Usage: 24kB
+                          Worker 1:  Batches: 1  Memory Usage: 24kB
+                          ->  Hash Join  (cost=17.25..7807.10 rows=208333 width=7) (actual time=1.609..113.481 rows=166667 loops=3)
+                                Hash Cond: (f.customer_key = c.customer_key)
+                                Buffers: shared hit=5201
+                                ->  Parallel Seq Scan on fact_transactions f  (cost=0.00..7238.33 rows=208333 width=5) (actual time=0.034..40.721 rows=166667 loops=3)
+                                      Buffers: shared hit=5155
+                                ->  Hash  (cost=11.00..11.00 rows=500 width=10) (actual time=1.470..1.471 rows=500 loops=3)
+                                      Buckets: 1024  Batches: 1  Memory Usage: 30kB
+                                      Buffers: shared hit=18
+                                      ->  Seq Scan on dim_customer c  (cost=0.00..11.00 rows=500 width=10) (actual time=1.107..1.290 rows=500 loops=3)
+                                            Buffers: shared hit=18
+Planning:
+  Buffers: shared hit=14
+Planning Time: 0.516 ms
+Execution Time: 219.956 ms
